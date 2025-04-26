@@ -36,9 +36,6 @@ contract FonzoMarket is IFonzoMarket {
     /// @dev Keep track of initialized market feed ids
     bytes21[] private _marketIds;
 
-    /// @dev Keep track of user predictions round identifiers
-    mapping(address account => uint256[]) private _positions;
-
     constructor(address _owner, address _ftsoV2) {
         ftsoV2 = FtsoV2Interface(_ftsoV2);
         owner = _owner;
@@ -160,21 +157,17 @@ contract FonzoMarket is IFonzoMarket {
      * ===================================== Getter Functions =====================================
      */
     /// @inheritdoc IFonzoMarket
-    function getAccountRoundsWithPositions(bytes21 id, address account, uint256 cursor)
+    function getPositions(bytes21 id, address account, uint256[] calldata roundIds)
         external
         view
         override
-        returns (RoundInfo[] memory rounds, uint256 total)
+        returns (RoundInfo[] memory rounds)
     {
-        uint256 len = _positions[account].length;
-        total = cursor > 0 && len > 0 ? len - cursor : len;
-        uint256 pageSize = total > 100 ? 100 : total;
-
-        rounds = new RoundInfo[](pageSize);
+        rounds = new RoundInfo[](roundIds.length);
         MarketInfo storage market = _markets[id];
 
-        for (uint256 i = 0; i < pageSize; i++) {
-            uint256 roundId = _positions[account][cursor + i];
+        for (uint256 i = 0; i < roundIds.length; i++) {
+            uint256 roundId = roundIds[i];
             Round memory round = market.rounds[roundId];
 
             bytes32 positionId = keccak256(abi.encodePacked(id, roundId, account));
@@ -296,7 +289,6 @@ contract FonzoMarket is IFonzoMarket {
             }
         }
 
-        _positions[account].push(roundId);
         position.stake = stake;
         position.option = option;
     }

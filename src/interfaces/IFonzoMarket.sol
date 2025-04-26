@@ -164,15 +164,14 @@ interface IFonzoMarket {
      *
      * @param id market identifier
      * @param account user address
-     * @param cursor the pagination cursor
+     * @param roundIds array of rounds to fetch positions
      * @return rounds array round position info
-     * @return total the total size
      *
      */
-    function getAccountRoundsWithPositions(bytes21 id, address account, uint256 cursor)
+    function getPositions(bytes21 id, address account, uint256[] calldata roundIds)
         external
         view
-        returns (RoundInfo[] memory rounds, uint256 total);
+        returns (RoundInfo[] memory rounds);
 
     /**
      * @dev Getter function for UI, to fetch markets latest 5 rounds with user position and config
