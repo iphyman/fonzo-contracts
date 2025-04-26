@@ -12,6 +12,13 @@ interface IFonzoMarket {
         REFUNDING
     }
 
+    /// @dev Possible position options
+    enum Option {
+        NONE,
+        BEARISH,
+        BULLISH
+    }
+
     /// @dev structure for market prediction round
     struct Round {
         /// unix timestamp of when market round entry closes
@@ -19,9 +26,9 @@ interface IFonzoMarket {
         /// unix timestamp of when market round is due for resolution
         uint64 closingTime;
         /// asset closing price as obtained from the oracle
-        int64 closingPrice;
+        uint64 closingPrice;
         /// round locked price
-        int64 priceMark;
+        uint64 priceMark;
         /// sum of all stakes in this round
         uint128 totalShares;
         /// sum of all bullish positions stakes
@@ -35,7 +42,7 @@ interface IFonzoMarket {
         /// the status describing the round state
         Status status;
         /// the winning side
-        uint8 winningSide;
+        Option winningSide;
     }
 
     /**
@@ -46,7 +53,7 @@ interface IFonzoMarket {
         // The amount staked as wager for position
         uint240 stake;
         // The user's choice of either `Bearish = 1` or `Bullish = 2`
-        uint8 option;
+        Option option;
         // True if the option has been exercised or position reward claimed
         bool settled;
     }
@@ -59,9 +66,9 @@ interface IFonzoMarket {
         /// unix timestamp of when market round is due for resolution
         uint64 closingTime;
         /// asset closing price as obtained from the oracle
-        int64 closingPrice;
+        uint64 closingPrice;
         /// round locked price
-        int64 priceMark;
+        uint64 priceMark;
         /// sum of all stakes in this round
         uint128 totalShares;
         /// sum of all bullish positions stakes
@@ -75,7 +82,7 @@ interface IFonzoMarket {
         /// the status describing the round state
         Status status;
         /// the winning side
-        uint8 winningSide;
+        Option winningSide;
         /// the user position
         Position position;
     }
@@ -106,6 +113,12 @@ interface IFonzoMarket {
 
     /// @notice Revert when stake is zero
     error AmountCannotBeZero();
+
+    /// @notice Revert when insufficient fee is provided to call FTSO
+    error InsufficientFee();
+
+    /// @notice Revert when round status is invalid for an action to be performed
+    error InvalidRoundStatus();
 
     /**
      * @notice Called to place a bearish bet on a market
@@ -153,12 +166,13 @@ interface IFonzoMarket {
      * @param account user address
      * @param cursor the pagination cursor
      * @return rounds array round position info
+     * @return total the total size
      *
      */
     function getAccountRoundsWithPositions(bytes21 id, address account, uint256 cursor)
         external
         view
-        returns (RoundInfo[] memory rounds);
+        returns (RoundInfo[] memory rounds, uint256 total);
 
     /**
      * @dev Getter function for UI, to fetch markets latest 5 rounds with user position and config

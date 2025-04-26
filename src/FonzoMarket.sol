@@ -5,6 +5,327 @@ pragma solidity ^0.8.28;
 import {FtsoV2Interface} from "./interfaces/FtsoV2Interface.sol";
 import {IFonzoMarket} from "./interfaces/IFonzoMarket.sol";
 
-contract FonzoMarket {
-    constructor() {}
+contract FonzoMarket is IFonzoMarket {
+    uint16 internal constant BASIS_POINT = 10_000; // 100%
+    uint16 internal constant PROTOCOL_FEE_BPS = 1_000; // 10%
+    uint256 public constant DURATION = 5 minutes;
+
+    struct MarketInfo {
+        /// keeps track of market last round id
+        uint256 roundId;
+        /// FTSO oracle price feed identifier
+        bytes32 oracleId;
+        /// keeps track of users positions in this market
+        mapping(bytes32 positionId => Position) positions;
+        /// keeps track of market rounds
+        mapping(uint256 roundId => Round) rounds;
+    }
+
+    /// @dev Store the FTSOV2 contract
+    FtsoV2Interface public immutable ftsoV2;
+
+    /// @dev Store the contract owner for authentication to collect fees
+    address public owner;
+
+    /// @dev Store the fees accrued to protocol
+    uint256 public protocolFeesAccrued;
+
+    /// @dev Keep track of each markets data
+    mapping(bytes21 id => MarketInfo market) private _markets;
+
+    /// @dev Keep track of initialized market feed ids
+    bytes21[] private _marketIds;
+
+    /// @dev Keep track of user predictions round identifiers
+    mapping(address account => uint256[]) private _positions;
+
+    constructor(address _owner, address _ftsoV2) {
+        ftsoV2 = FtsoV2Interface(_ftsoV2);
+        owner = _owner;
+    }
+
+    /// @inheritdoc IFonzoMarket
+    function bearish(bytes21 id, uint256 roundId) external payable override {
+        _predit(id, roundId, msg.sender, uint128(msg.value), Option.BEARISH);
+    }
+
+    /// @inheritdoc IFonzoMarket
+    function bullish(bytes21 id, uint256 roundId) external payable override {
+        _predit(id, roundId, msg.sender, uint128(msg.value), Option.BULLISH);
+    }
+
+    /// @inheritdoc IFonzoMarket
+    function settle(bytes21 id, uint256[] calldata roundIds) external override {
+        uint256 reward;
+
+        for (uint256 i = 0; i < roundIds.length; i++) {
+            reward += _settle(id, roundIds[i], msg.sender);
+        }
+
+        /// @dev Transfer reward to caller
+        payable(address(msg.sender)).transfer(reward);
+    }
+
+    /// @inheritdoc IFonzoMarket
+    function initializeMarket(bytes21 id) external payable override {
+        MarketInfo storage market = _markets[id];
+
+        // ensure market does not exist already
+        if (market.oracleId != bytes21(0)) revert MarketAlreadyExist();
+        market.oracleId = id;
+        _marketIds.push(id);
+
+        // ensure price feed exists for the new market been created
+        uint256 _fee = ftsoV2.calculateFeeById(id);
+        if (msg.value < _fee) revert InsufficientFee();
+
+        /// @dev TODO: we should probably check the returned value to ensure it's a valid feed
+        (uint256 price,,) = ftsoV2.getFeedById(id);
+
+        // Initialize and lock the genesis round
+        _startNextRound(market);
+        _lockMarketRound(market, 1, uint64(price));
+
+        // start n + 1 round to maintain the loop
+        _startNextRound(market);
+    }
+
+    /// @inheritdoc IFonzoMarket
+    function resolve(bytes21 id, uint256 roundId) external payable override {
+        MarketInfo storage market = _markets[id];
+        Round storage round = market.rounds[roundId];
+
+        // ensure round status can be resolved
+        if (round.status != Status.LIVE) revert InvalidRoundStatus();
+
+        // ensure the timing is right
+        if (round.closingTime > block.timestamp) revert ActionTooEarly();
+
+        uint256 _fee = ftsoV2.calculateFeeById(id);
+        if (msg.value < _fee) revert InsufficientFee();
+
+        (uint256 price,,) = ftsoV2.getFeedById(id);
+        uint64 closingPrice = uint64(price);
+
+        // lock the following n + 1 round
+        _lockMarketRound(market, roundId + 1, closingPrice);
+        // start another n + 2 round
+        _startNextRound(market);
+
+        // only collect protocol fee when position exists on both sides
+        round.closingPrice = closingPrice;
+        round.status = Status.RESOLVED;
+
+        uint128 protocolFee;
+        uint128 rewardBase;
+        uint128 resolverFee;
+        bool isHouseWin;
+
+        // if closing price greater than locked price, market was bullish, the bulls wins
+        if (closingPrice > round.priceMark) {
+            round.winningShares = round.bullShares;
+            round.winningSide = Option.BULLISH;
+            round.rewardPool = round.totalShares;
+            rewardBase = round.bearShares;
+            isHouseWin = round.bearShares > 0 && round.bullShares == 0;
+            // if closing price less than locked price, market was bearish, the bears wins
+        } else if (closingPrice < round.priceMark) {
+            round.winningShares = round.bearShares;
+            round.winningSide = Option.BEARISH;
+            round.rewardPool = round.totalShares;
+            rewardBase = round.bullShares;
+            isHouseWin = round.bullShares > 0 && round.bearShares == 0;
+        }
+
+        if (round.bearShares > 0 && round.bullShares > 0) {
+            protocolFee = (rewardBase * PROTOCOL_FEE_BPS) / BASIS_POINT;
+            resolverFee = (protocolFee * PROTOCOL_FEE_BPS) / BASIS_POINT;
+            round.rewardPool = round.totalShares - protocolFee;
+            // account for fee
+            protocolFeesAccrued += protocolFee - resolverFee;
+        }
+
+        if (isHouseWin) {
+            // the house wins
+            if (round.totalShares > 0) {
+                resolverFee = (round.totalShares * PROTOCOL_FEE_BPS) / BASIS_POINT;
+                protocolFeesAccrued += round.totalShares - resolverFee;
+            }
+        }
+
+        if (resolverFee > 0) payable(address(msg.sender)).transfer(resolverFee);
+    }
+
+    /**
+     * ===================================== Getter Functions =====================================
+     */
+    /// @inheritdoc IFonzoMarket
+    function getAccountRoundsWithPositions(bytes21 id, address account, uint256 cursor)
+        external
+        view
+        override
+        returns (RoundInfo[] memory rounds, uint256 total)
+    {
+        uint256 len = _positions[account].length;
+        total = cursor > 0 && len > 0 ? len - cursor : len;
+        uint256 pageSize = total > 100 ? 100 : total;
+
+        rounds = new RoundInfo[](pageSize);
+        MarketInfo storage market = _markets[id];
+
+        for (uint256 i = 0; i < pageSize; i++) {
+            uint256 roundId = _positions[account][cursor + i];
+            Round memory round = market.rounds[roundId];
+
+            bytes32 positionId = keccak256(abi.encodePacked(id, roundId, account));
+            Position memory position = market.positions[positionId];
+            rounds[i] = RoundInfo(
+                roundId,
+                round.lockTime,
+                round.closingTime,
+                round.closingPrice,
+                round.priceMark,
+                round.totalShares,
+                round.bullShares,
+                round.bearShares,
+                round.rewardPool,
+                round.winningShares,
+                round.status,
+                round.winningSide,
+                position
+            );
+        }
+    }
+
+    /// @inheritdoc IFonzoMarket
+    function getLatestRoundsWithPosition(bytes21 id, address account)
+        external
+        view
+        override
+        returns (RoundInfo[] memory rounds, uint256 roundId)
+    {
+        MarketInfo storage market = _markets[id];
+        roundId = market.roundId;
+
+        uint256 len = roundId > 5 ? 5 : roundId;
+        rounds = new RoundInfo[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            uint256 rId = roundId - i;
+            Round memory round = market.rounds[rId];
+
+            bytes32 positionId = keccak256(abi.encodePacked(id, rId, account));
+            Position memory position = market.positions[positionId];
+            rounds[i] = RoundInfo(
+                rId,
+                round.lockTime,
+                round.closingTime,
+                round.closingPrice,
+                round.priceMark,
+                round.totalShares,
+                round.bullShares,
+                round.bearShares,
+                round.rewardPool,
+                round.winningShares,
+                round.status,
+                round.winningSide,
+                position
+            );
+        }
+    }
+
+    /// @inheritdoc IFonzoMarket
+    function getMarketIds() external view override returns (bytes21[] memory marketIds) {
+        marketIds = new bytes21[](_marketIds.length);
+        marketIds = _marketIds;
+    }
+
+    /**
+     * ===================================== Internal Functions ==================================
+     */
+    function _startNextRound(MarketInfo storage market) private {
+        uint256 roundId = ++market.roundId;
+
+        uint64 lockTime = uint64(block.timestamp + DURATION);
+        uint64 closingTime = uint64(block.timestamp + (DURATION * 2));
+
+        Round storage round = market.rounds[roundId];
+        round.status = Status.OPEN;
+        round.lockTime = lockTime;
+        round.closingTime = closingTime;
+    }
+
+    function _lockMarketRound(MarketInfo storage market, uint256 roundId, uint64 price) private {
+        Round storage round = market.rounds[roundId];
+        uint64 closingTime = uint64(block.timestamp + DURATION);
+        round.status = Status.LIVE;
+        round.closingTime = closingTime;
+        round.priceMark = price;
+    }
+
+    function _predit(bytes21 id, uint256 roundId, address account, uint128 stake, Option option)
+        private
+        returns (bytes32 positionId)
+    {
+        MarketInfo storage market = _markets[id];
+        Round storage round = market.rounds[roundId];
+
+        // ensure market is initialized
+        if (market.oracleId == bytes21(0)) revert MarketNotInitialized();
+        // ensure round entry is open
+        if (block.timestamp > round.lockTime) revert EntryClosed();
+
+        // ensure stake is not zero
+        if (stake == 0) revert AmountCannotBeZero();
+
+        positionId = keccak256(abi.encodePacked(id, roundId, account));
+        Position storage position = market.positions[positionId];
+
+        // ensure user has no previous position
+        if (position.stake > 0) revert PositionExist();
+
+        // if all checks well, open position
+        // probably not going to overflow, even if Elon Musk stakes all his wealth, LOL!
+        unchecked {
+            round.totalShares += stake;
+
+            if (option == Option.BULLISH) {
+                round.bullShares += stake;
+            } else {
+                round.bearShares += stake;
+            }
+        }
+
+        _positions[account].push(roundId);
+        position.stake = stake;
+        position.option = option;
+    }
+
+    function _settle(bytes21 id, uint256 roundId, address account) private returns (uint256 reward) {
+        MarketInfo storage market = _markets[id];
+        Round storage round = market.rounds[roundId];
+
+        bytes32 positionId = keccak256(abi.encodePacked(id, roundId, account));
+        Position storage position = market.positions[positionId];
+
+        // ensure user has a valid position
+        if (position.stake == 0) revert PositionNotFound();
+        // ensure user has not claimed reward already
+        if (position.settled) revert Claimed();
+
+        // tag claimed to avoid reentrancy
+        position.settled = true;
+        bool isRewardable = round.winningSide == position.option;
+        bool isRefund;
+
+        if (round.status == Status.RESOLVED && isRewardable) {
+            reward = (position.stake * round.rewardPool) / round.winningShares;
+            isRefund = reward == position.stake;
+        } else if (round.status == Status.REFUNDING) {
+            reward = position.stake;
+            isRefund = true;
+        } else {
+            revert NoReward();
+        }
+    }
 }
