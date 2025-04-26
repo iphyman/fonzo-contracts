@@ -113,7 +113,7 @@ interface IFonzo {
      * @param id the identifier of market to open position in
      * @param roundId the unique id of the active round
      */
-    function bearish(bytes32 id, uint256 roundId) external payable;
+    function bearish(bytes21 id, uint256 roundId) external payable;
 
     /**
      * @notice Called to place a bullish bet on a market
@@ -121,7 +121,7 @@ interface IFonzo {
      * @param id the identifier of market to open position in
      * @param roundId the unique id of the active round
      */
-    function bullish(bytes32 id, uint256 roundId) external payable;
+    function bullish(bytes21 id, uint256 roundId) external payable;
 
     /**
      * @dev Allows owner to settle a positions, more like claiming rewards accrued in `roundIds`
@@ -129,24 +129,22 @@ interface IFonzo {
      * @param id market identifier
      * @param roundIds array of round identifiers
      */
-    function settle(bytes32 id, uint256[] calldata roundIds) external;
+    function settle(bytes21 id, uint256[] calldata roundIds) external;
 
     /**
      * @dev Allows anyone to initialize a new market if it's not yet existing
      *
-     * @param id Pyth oracle price feed identifier
-     * @param priceUpdate pyth price update data
+     * @param id FTSO oracle price feed identifier
      */
-    function initializeMarket(bytes32 id, bytes calldata priceUpdate) external;
+    function initializeMarket(bytes21 id) external payable;
 
     /**
      * @dev Allows anyone to resolve a prediction round
      *
      * @param id market identifier
      * @param roundId id of round to finalize
-     * @param priceUpdate pyth price update data
      */
-    function resolve(bytes32 id, uint256 roundId, bytes calldata priceUpdate) external;
+    function resolve(bytes21 id, uint256 roundId) external payable;
 
     /**
      * @dev Returns market user round position info for UI
@@ -157,7 +155,7 @@ interface IFonzo {
      * @return rounds array round position info
      *
      */
-    function getAccountRoundsWithPositions(bytes32 id, address account, uint256 cursor)
+    function getAccountRoundsWithPositions(bytes21 id, address account, uint256 cursor)
         external
         view
         returns (RoundInfo[] memory rounds);
@@ -170,7 +168,7 @@ interface IFonzo {
      * @return rounds array of round structs
      * @return roundId the latest round identifier
      */
-    function getLatestRoundsWithPosition(bytes32 id, address account)
+    function getLatestRoundsWithPosition(bytes21 id, address account)
         external
         view
         returns (RoundInfo[] memory rounds, uint256 roundId);
@@ -179,5 +177,5 @@ interface IFonzo {
      * @dev Getter function to return an array of all created markets
      * @return marketIds Array of market identifiers
      */
-    function getMarketIds() external view returns (bytes32[] memory marketIds);
+    function getMarketIds() external view returns (bytes21[] memory marketIds);
 }
