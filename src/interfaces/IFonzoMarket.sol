@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.28;
 
-interface IFonzo {
+interface IFonzoMarket {
     /// @dev possible state of a round
     enum Status {
         NOT_OPEN,
