@@ -152,6 +152,9 @@ interface IFonzoMarket {
     /// @notice Emitted whenever a rounds price is locked
     event LockedPrice(bytes21 indexed marketId, uint256 indexed roundId, uint256 lockedPrice, uint256 closingTime);
 
+    /// @notice Emitted whenever a new market is initialized
+    event InitializedMarket(bytes21 indexed id, address indexed creator);
+
     /**
      * @notice Called to place a bearish bet on a market
      *

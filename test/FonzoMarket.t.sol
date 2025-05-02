@@ -31,11 +31,36 @@ contract FonzoMarketTest is Test {
         ftsoV2 = new MockFtsoV2();
         fonzo = new FonzoMarket(owner, address(ftsoV2));
 
+        updateFlarePriceFeed(1);
+        fonzo.initializeMarket(FLR_USD_ID);
+
         vm.warp(25 minutes);
     }
 
     function test_constructor() public view {
         assertEq(fonzo.owner(), owner);
         assertEq(address(fonzo.ftsoV2()), address(ftsoV2));
+    }
+
+    function updateFlarePriceFeed(uint256 value) internal {
+        ftsoV2.updateFeed(FLR_USD_ID, value * 10 ** 8, 8, uint64(block.timestamp));
+    }
+
+    function test_initializeMarket_succeeds() public {
+        ftsoV2.updateFeed(BTC_USD_ID, 96e8, 8, uint64(block.timestamp));
+
+        vm.expectEmit();
+        emit IFonzoMarket.InitializedMarket(BTC_USD_ID, owner);
+        vm.prank(owner);
+        fonzo.initializeMarket(BTC_USD_ID);
+    }
+
+    function test_initializeMarket_reverts_when_market_already_exist() public {
+        ftsoV2.updateFeed(BTC_USD_ID, 96e8, 8, uint64(block.timestamp));
+
+        fonzo.initializeMarket(BTC_USD_ID);
+
+        vm.expectRevert(IFonzoMarket.MarketAlreadyExist.selector);
+        fonzo.initializeMarket(BTC_USD_ID);
     }
 }

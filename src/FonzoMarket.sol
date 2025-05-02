@@ -87,6 +87,8 @@ contract FonzoMarket is IFonzoMarket {
 
         // start n + 1 round to maintain the loop
         _startNextRound(market, id);
+
+        emit InitializedMarket(id, msg.sender);
     }
 
     /// @inheritdoc IFonzoMarket
