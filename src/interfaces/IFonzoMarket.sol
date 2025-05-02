@@ -15,8 +15,8 @@ interface IFonzoMarket {
     /// @dev Possible position options
     enum Option {
         NONE,
-        BEARISH,
-        BULLISH
+        DOWN,
+        UP
     }
 
     /// @dev structure for market prediction round
@@ -68,7 +68,7 @@ interface IFonzoMarket {
         /// asset closing price as obtained from the oracle
         uint64 closingPrice;
         /// round locked price
-        uint64 priceMark;
+        uint64 lockedPrice;
         /// sum of all stakes in this round
         uint128 totalShares;
         /// sum of all bullish positions stakes
@@ -119,6 +119,38 @@ interface IFonzoMarket {
 
     /// @notice Revert when round status is invalid for an action to be performed
     error InvalidRoundStatus();
+
+    /// @notice Emitted whenever a user makes a prediction on a market price movement
+    event Predicted(
+        bytes21 indexed marketId,
+        uint256 indexed roundId,
+        address indexed account,
+        bytes32 positionId,
+        Option option,
+        uint256 betAmount
+    );
+
+    /// @notice Emitted whenever a user claims reward
+    event Claim(
+        bytes21 indexed marketId, uint256 indexed roundId, address indexed account, bytes32 positionId, uint256 amount
+    );
+
+    /// @notice Emitted whenever a market round is resolved
+    event Resolve(
+        bytes21 indexed marketId,
+        uint256 indexed roundId,
+        uint256 closePrice,
+        uint256 rewardPool,
+        uint256 winningShares,
+        Option winningSide,
+        uint256 resolverReward
+    );
+
+    /// @notice Emitted whenever a new round  starts
+    event NewRound(bytes21 indexed marketId, uint256 indexed roundId, uint256 lockTime, uint256 closingTime);
+
+    /// @notice Emitted whenever a rounds price is locked
+    event LockedPrice(bytes21 indexed marketId, uint256 indexed roundId, uint256 lockedPrice, uint256 closingTime);
 
     /**
      * @notice Called to place a bearish bet on a market
@@ -172,6 +204,16 @@ interface IFonzoMarket {
         external
         view
         returns (RoundInfo[] memory rounds);
+
+    /**
+     * @dev Returns market user round ids info for UI
+     *
+     * @param id market identifier
+     * @param account user address
+     * @return roundIds array round roundIds
+     *
+     */
+    function getMyRoundIds(bytes21 id, address account) external view returns (uint256[] memory roundIds);
 
     /**
      * @dev Getter function for UI, to fetch markets latest 5 rounds with user position and config

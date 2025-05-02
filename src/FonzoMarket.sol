@@ -19,6 +19,8 @@ contract FonzoMarket is IFonzoMarket {
         mapping(bytes32 positionId => Position) positions;
         /// keeps track of market rounds
         mapping(uint256 roundId => Round) rounds;
+        /// Kepps track of users roundIds
+        mapping(address account => uint256[]) myRoundIds;
     }
 
     /// @dev Store the FTSOV2 contract
@@ -43,12 +45,12 @@ contract FonzoMarket is IFonzoMarket {
 
     /// @inheritdoc IFonzoMarket
     function bearish(bytes21 id, uint256 roundId) external payable override {
-        _predit(id, roundId, msg.sender, uint128(msg.value), Option.BEARISH);
+        _predit(id, roundId, msg.sender, uint128(msg.value), Option.DOWN);
     }
 
     /// @inheritdoc IFonzoMarket
     function bullish(bytes21 id, uint256 roundId) external payable override {
-        _predit(id, roundId, msg.sender, uint128(msg.value), Option.BULLISH);
+        _predit(id, roundId, msg.sender, uint128(msg.value), Option.UP);
     }
 
     /// @inheritdoc IFonzoMarket
@@ -80,11 +82,11 @@ contract FonzoMarket is IFonzoMarket {
         (uint256 price,,) = ftsoV2.getFeedById(id);
 
         // Initialize and lock the genesis round
-        _startNextRound(market);
-        _lockMarketRound(market, 1, uint64(price));
+        _startNextRound(market, id);
+        _lockMarketRound(market, id, 1, uint64(price));
 
         // start n + 1 round to maintain the loop
-        _startNextRound(market);
+        _startNextRound(market, id);
     }
 
     /// @inheritdoc IFonzoMarket
@@ -105,9 +107,9 @@ contract FonzoMarket is IFonzoMarket {
         uint64 closingPrice = uint64(price);
 
         // lock the following n + 1 round
-        _lockMarketRound(market, roundId + 1, closingPrice);
+        _lockMarketRound(market, id, roundId + 1, closingPrice);
         // start another n + 2 round
-        _startNextRound(market);
+        _startNextRound(market, id);
 
         // only collect protocol fee when position exists on both sides
         round.closingPrice = closingPrice;
@@ -121,14 +123,14 @@ contract FonzoMarket is IFonzoMarket {
         // if closing price greater than locked price, market was bullish, the bulls wins
         if (closingPrice > round.priceMark) {
             round.winningShares = round.bullShares;
-            round.winningSide = Option.BULLISH;
+            round.winningSide = Option.UP;
             round.rewardPool = round.totalShares;
             rewardBase = round.bearShares;
             isHouseWin = round.bearShares > 0 && round.bullShares == 0;
             // if closing price less than locked price, market was bearish, the bears wins
         } else if (closingPrice < round.priceMark) {
             round.winningShares = round.bearShares;
-            round.winningSide = Option.BEARISH;
+            round.winningSide = Option.DOWN;
             round.rewardPool = round.totalShares;
             rewardBase = round.bullShares;
             isHouseWin = round.bullShares > 0 && round.bearShares == 0;
@@ -151,6 +153,7 @@ contract FonzoMarket is IFonzoMarket {
         }
 
         if (resolverFee > 0) payable(address(msg.sender)).transfer(resolverFee);
+        emit Resolve(id, roundId, closingPrice, round.rewardPool, round.winningShares, round.winningSide, resolverFee);
     }
 
     /**
@@ -188,6 +191,13 @@ contract FonzoMarket is IFonzoMarket {
                 position
             );
         }
+    }
+
+    /// @inheritdoc IFonzoMarket
+    function getMyRoundIds(bytes21 id, address account) external view override returns (uint256[] memory roundIds) {
+        MarketInfo storage market = _markets[id];
+        roundIds = new uint256[](market.myRoundIds[account].length);
+        roundIds = market.myRoundIds[account];
     }
 
     /// @inheritdoc IFonzoMarket
@@ -236,7 +246,7 @@ contract FonzoMarket is IFonzoMarket {
     /**
      * ===================================== Internal Functions ==================================
      */
-    function _startNextRound(MarketInfo storage market) private {
+    function _startNextRound(MarketInfo storage market, bytes21 id) private {
         uint256 roundId = ++market.roundId;
 
         uint64 lockTime = uint64(block.timestamp + DURATION);
@@ -246,14 +256,18 @@ contract FonzoMarket is IFonzoMarket {
         round.status = Status.OPEN;
         round.lockTime = lockTime;
         round.closingTime = closingTime;
+
+        emit NewRound(id, roundId, lockTime, closingTime);
     }
 
-    function _lockMarketRound(MarketInfo storage market, uint256 roundId, uint64 price) private {
+    function _lockMarketRound(MarketInfo storage market, bytes21 id, uint256 roundId, uint64 price) private {
         Round storage round = market.rounds[roundId];
         uint64 closingTime = uint64(block.timestamp + DURATION);
         round.status = Status.LIVE;
         round.closingTime = closingTime;
         round.priceMark = price;
+
+        emit LockedPrice(id, roundId, price, closingTime);
     }
 
     function _predit(bytes21 id, uint256 roundId, address account, uint128 stake, Option option)
@@ -282,15 +296,18 @@ contract FonzoMarket is IFonzoMarket {
         unchecked {
             round.totalShares += stake;
 
-            if (option == Option.BULLISH) {
+            if (option == Option.UP) {
                 round.bullShares += stake;
             } else {
                 round.bearShares += stake;
             }
         }
 
+        market.myRoundIds[account].push(roundId);
         position.stake = stake;
         position.option = option;
+
+        emit Predicted(id, roundId, account, positionId, option, stake);
     }
 
     function _settle(bytes21 id, uint256 roundId, address account) private returns (uint256 reward) {
@@ -308,16 +325,15 @@ contract FonzoMarket is IFonzoMarket {
         // tag claimed to avoid reentrancy
         position.settled = true;
         bool isRewardable = round.winningSide == position.option;
-        bool isRefund;
 
         if (round.status == Status.RESOLVED && isRewardable) {
             reward = (position.stake * round.rewardPool) / round.winningShares;
-            isRefund = reward == position.stake;
         } else if (round.status == Status.REFUNDING) {
             reward = position.stake;
-            isRefund = true;
         } else {
             revert NoReward();
         }
+
+        emit Claim(id, roundId, account, positionId, reward);
     }
 }
