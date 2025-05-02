@@ -216,14 +216,15 @@ interface IFonzoMarket {
     function getMyRoundIds(bytes21 id, address account) external view returns (uint256[] memory roundIds);
 
     /**
-     * @dev Getter function for UI, to fetch markets latest 5 rounds with user position and config
+     * @dev Getter function for UI, to fetch markets latest n rounds with user position and config
      *
      * @param id unique market identifier
      * @param account address of user positions to fetch
+     * @param numOfRounds;
      * @return rounds array of round structs
      * @return roundId the latest round identifier
      */
-    function getLatestRoundsWithPosition(bytes21 id, address account)
+    function getLatestRoundsWithPosition(bytes21 id, address account, uint256 numOfRounds)
         external
         view
         returns (RoundInfo[] memory rounds, uint256 roundId);

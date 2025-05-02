@@ -201,7 +201,7 @@ contract FonzoMarket is IFonzoMarket {
     }
 
     /// @inheritdoc IFonzoMarket
-    function getLatestRoundsWithPosition(bytes21 id, address account)
+    function getLatestRoundsWithPosition(bytes21 id, address account, uint256 numOfRounds)
         external
         view
         override
@@ -210,7 +210,8 @@ contract FonzoMarket is IFonzoMarket {
         MarketInfo storage market = _markets[id];
         roundId = market.roundId;
 
-        uint256 len = roundId > 5 ? 5 : roundId;
+        numOfRounds = numOfRounds == 0 ? 5 : numOfRounds;
+        uint256 len = roundId > numOfRounds ? numOfRounds : roundId;
         rounds = new RoundInfo[](len);
 
         for (uint256 i = 0; i < len; i++) {
