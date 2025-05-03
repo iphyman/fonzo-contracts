@@ -7,7 +7,7 @@ fs_permissions = [
     { access = "read", path = "./out" },
 ]
 solc = "0.8.28"
-evm_version = "cancun"
+evm_version = "paris"
 auto_detect_solc = true
 src = "src"
 out = "out"
