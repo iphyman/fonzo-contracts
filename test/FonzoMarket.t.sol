@@ -253,4 +253,46 @@ contract FonzoMarketTest is Test {
         vm.expectRevert(IFonzoMarket.Claimed.selector);
         fonzo.settle(FLR_USD_ID, roundIds);
     }
+
+    function test_resolve_succeeds() public {
+        vm.prank(userA);
+        fonzo.bearish{value: 10 ether}(FLR_USD_ID, 2);
+
+        vm.prank(userB);
+        fonzo.bullish{value: 4 ether}(FLR_USD_ID, 2);
+
+        vm.warp(block.timestamp + 5 minutes);
+        updateFlarePriceFeed(1);
+
+        vm.prank(userC);
+        fonzo.resolve{value: 0.5 ether}(FLR_USD_ID, 1);
+
+        vm.warp(block.timestamp + 5 minutes + 2);
+        updateFlarePriceFeed(2);
+
+        vm.expectEmit();
+        emit IFonzoMarket.Resolve(FLR_USD_ID, 2, 2 * 10 ** 8, 13 ether, 4 ether, IFonzoMarket.Option.UP, 0.1 ether);
+        vm.prank(userC);
+        fonzo.resolve{value: 0.5 ether}(FLR_USD_ID, 2);
+
+        assertEq(fonzo.protocolFeesAccrued(), 0.9 ether);
+    }
+
+    function test_resolve_reverts_when_round_status_is_invalid() public {
+        vm.warp(block.timestamp + 5 minutes);
+        updateFlarePriceFeed(2);
+
+        vm.prank(userC);
+        vm.expectRevert(IFonzoMarket.InvalidRoundStatus.selector);
+        fonzo.resolve(FLR_USD_ID, 2);
+    }
+
+    function test_resolve_reverts_when_action_is_too_early() public {
+        vm.warp(block.timestamp + 2 minutes);
+        updateFlarePriceFeed(1);
+
+        vm.prank(userC);
+        vm.expectRevert(IFonzoMarket.ActionTooEarly.selector);
+        fonzo.resolve(FLR_USD_ID, 1);
+    }
 }
