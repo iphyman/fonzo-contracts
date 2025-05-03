@@ -100,4 +100,41 @@ contract FonzoMarketTest is Test {
         vm.expectRevert(IFonzoMarket.PositionExist.selector);
         fonzo.bearish{value: 3 ether}(FLR_USD_ID, 2);
     }
+
+    function test_bullish_succeeds() public {
+        bytes32 positionId = keccak256(abi.encodePacked(FLR_USD_ID, uint256(2), userA));
+
+        vm.prank(userA);
+        vm.expectEmit();
+        emit IFonzoMarket.Predicted(FLR_USD_ID, 2, userA, positionId, IFonzoMarket.Option.UP, 2 ether);
+        fonzo.bullish{value: 2 ether}(FLR_USD_ID, 2);
+    }
+
+    function test_bullish_reverts_when_market_does_not_exist() public {
+        vm.expectRevert(IFonzoMarket.MarketNotInitialized.selector);
+        vm.prank(userA);
+        fonzo.bullish{value: 2 ether}(BTC_USD_ID, 1);
+    }
+
+    function test_bullish_reverts_when_entry_not_allowed() public {
+        vm.warp(block.timestamp + 5 minutes + 20);
+        vm.expectRevert(IFonzoMarket.EntryClosed.selector);
+        vm.prank(userA);
+        fonzo.bullish{value: 2 ether}(FLR_USD_ID, 1);
+    }
+
+    function test_bullish_reverts_if_no_stake() public {
+        vm.prank(userA);
+        vm.expectRevert(IFonzoMarket.AmountCannotBeZero.selector);
+        fonzo.bullish(FLR_USD_ID, 2);
+    }
+
+    function test_bullish_reverts_when_position_exist() public {
+        vm.prank(userA);
+        fonzo.bullish{value: 2 ether}(FLR_USD_ID, 2);
+
+        vm.prank(userA);
+        vm.expectRevert(IFonzoMarket.PositionExist.selector);
+        fonzo.bullish{value: 3 ether}(FLR_USD_ID, 2);
+    }
 }
